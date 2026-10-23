@@ -4,23 +4,7 @@ An end-to-end data pipeline that streams live stock prices for 7 companies, stor
 
 **Stack:** Python · Kafka · MinIO (S3) · Snowflake · dbt · Airflow · Docker · Streamlit
 
-```mermaid
-flowchart LR
-    F[Finnhub API] -->|every 15 s| P[producer.py]
-    P -->|JSON, key = symbol| K[(Kafka)]
-    K --> C[consumer.py]
-    C -->|batch files| M[(MinIO<br/>bronze bucket)]
 
-    subgraph A [Airflow - hourly, market hours]
-        L[loader.py] --> D[dbt build]
-    end
-
-    M --> L
-    L -->|PUT + COPY INTO| R[(Snowflake RAW)]
-    D -->|SQL| S[(BRONZE → SILVER → GOLD)]
-    R --> S
-    S --> DB[Streamlit dashboard]
-```
 
 ## How it works
 
