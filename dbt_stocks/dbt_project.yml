@@ -1,0 +1,27 @@
+name: stock_analytics
+version: "1.0.0"
+profile: stock_analytics
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+clean-targets: ["target", "dbt_packages"]
+
+# Medallion layers -> one Snowflake schema each (BRONZE, SILVER, GOLD)
+models:
+  stock_analytics:
+    bronze:
+      +schema: bronze
+      +materialized: view      # just parses the raw JSON, no storage cost
+    silver:
+      +schema: silver
+      +materialized: table
+    gold:
+      +schema: gold
+      +materialized: table
+
+seeds:
+  stock_analytics:
+    +schema: silver

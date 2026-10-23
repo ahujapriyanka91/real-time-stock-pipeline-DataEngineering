@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: silver_stock_quotes
+    description: Clean, deduplicated stock quotes. One row per Kafka message.
+    columns:
+      - name: quote_id
+        description: Kafka "partition-offset" - unique id of the message.
+        data_tests:
+          - unique
+          - not_null
+      - name: symbol
+        description: Stock ticker.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('symbols')
+                field: symbol
+      - name: price
+        description: Last traded price (USD).
+        data_tests:
+          - not_null
+      - name: quote_at_utc
+        description: Time of the last trade according to Finnhub (UTC).
+        data_tests:
+          - not_null
+      - name: trading_date
+        description: Trading day in New York time.
+
+seeds:
+  - name: symbols
+    description: Company name and sector for each tracked ticker.
+    columns:
+      - name: symbol
+        data_tests:
+          - unique
+          - not_null

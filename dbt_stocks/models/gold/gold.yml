@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: gold_latest_quotes
+    description: Latest price per stock with company info (KPI cards).
+    columns:
+      - name: symbol
+        data_tests:
+          - unique
+          - not_null
+
+  - name: gold_prices_5min
+    description: Open, high, low and close price per stock for every 5-minute interval, in New York market time.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [symbol, interval_start]
+
+  - name: gold_daily_summary
+    description: One row per stock per trading day - OHLC, daily return and intraday range.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [symbol, trading_date]
+    columns:
+      - name: daily_return_pct
+        description: Percent change from previous close.

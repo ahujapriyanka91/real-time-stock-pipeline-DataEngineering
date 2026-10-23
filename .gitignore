@@ -1,0 +1,22 @@
+# Secrets - never push these
+.env
+*.env
+keys/
+*.p8
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Generated output (dbt target/ and logs/, Airflow logs/)
+target/
+logs/
+dbt_packages/
+dbt_stocks/.user.yml
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

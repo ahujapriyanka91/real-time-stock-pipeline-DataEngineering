@@ -1,0 +1,21 @@
+version: 2
+
+sources:
+  - name: raw
+    database: STOCK_DB
+    schema: RAW
+    description: Raw quotes loaded by loader.py (MinIO -> Snowflake stage -> COPY INTO).
+    tables:
+      - name: stock_quotes
+        description: One row per Kafka message; the full message is kept as JSON in RECORD.
+        config:
+          loaded_at_field: loaded_at
+          freshness:
+            warn_after: {count: 6, period: hour}   # market is closed nights/weekends, so warn only
+        columns:
+          - name: record
+            description: Full JSON message from Kafka (VARIANT).
+          - name: source_file
+            description: MinIO file the row came from.
+          - name: loaded_at
+            description: When the loader copied the row into Snowflake.

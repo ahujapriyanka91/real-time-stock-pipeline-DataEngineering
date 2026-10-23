@@ -1,0 +1,9 @@
+# Keep the build context tiny: the image only needs requirements.txt
+venv/
+.env
+keys/
+airflow/
+dbt_stocks/target/
+dbt_stocks/logs/
+__pycache__/
+*.pyc

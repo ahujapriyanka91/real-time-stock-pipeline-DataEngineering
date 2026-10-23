@@ -1,0 +1,174 @@
+# Stock Market Data Pipeline - the whole pipeline in one file:
+#   producer + consumer + dashboard, Kafka + Kafka UI, MinIO, Airflow
+# Start:  docker compose up -d
+# Stop:   docker compose down
+
+# Settings shared by all Airflow containers
+x-airflow-common: &airflow-common
+  build: ./airflow
+  image: stock-airflow:3.3.2
+  env_file: .env                 # Snowflake + MinIO settings for loader.py and dbt
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"   # local dev only: no login screen
+    # Inside Docker, services are reached by container name, and paths are container paths
+    MINIO_ENDPOINT: http://minio:9000
+    SNOWFLAKE_PRIVATE_KEY_PATH: /opt/project/keys/snowflake_rsa_key.p8
+    DBT_PROJECT_DIR: /opt/project/dbt_stocks
+    DBT_PROFILES_DIR: /opt/project/dbt_stocks
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - .:/opt/project             # repo root: loader.py, dbt_stocks/, keys/
+  depends_on:
+    airflow-postgres:
+      condition: service_healthy
+  restart: unless-stopped
+
+# Settings shared by producer, consumer and dashboard
+x-app-common: &app-common
+  build: .
+  image: stock-app:1.0
+  env_file: .env
+  working_dir: /app
+  volumes:
+    - .:/app                     # the project folder: code, .env, keys/
+  restart: unless-stopped        # restart by itself after a crash or a reboot
+
+services:
+  # ---------------------------------------------------------------
+  # Steps 2-3 and 8: the always-on Python parts
+  # ---------------------------------------------------------------
+  producer:                      # Finnhub -> Kafka
+    <<: *app-common
+    container_name: producer
+    command: python producer.py
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092        # inside Docker: container name, not localhost
+    depends_on:
+      - kafka
+
+  consumer:                      # Kafka -> MinIO
+    <<: *app-common
+    container_name: consumer
+    command: python consumer.py
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      MINIO_ENDPOINT: http://minio:9000
+    depends_on:
+      - kafka
+      - minio
+
+  dashboard:                     # Snowflake GOLD -> charts, http://localhost:8501
+    <<: *app-common
+    container_name: dashboard
+    command: streamlit run dashboard/app.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true
+    environment:
+      SNOWFLAKE_PRIVATE_KEY_PATH: /app/keys/snowflake_rsa_key.p8
+    ports:
+      - "8501:8501"
+
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: kafka
+    ports:
+      - "9092:9092"   # for scripts running on your PC
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:29092,PLAINTEXT_HOST://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  kafka-ui:
+    image: kafbat/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8085:8080"   # open http://localhost:8085
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
+  minio:
+    image: pgsty/silo:latest   # drop-in MinIO fork (minio/minio was removed from Docker Hub)
+    container_name: minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console: http://localhost:9001
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password123
+    volumes:
+      - minio_data:/data
+
+  # ---------------------------------------------------------------
+  # Step 7: Airflow (runs loader.py + dbt build on a schedule)
+  # UI: http://localhost:8080
+  # ---------------------------------------------------------------
+  airflow-postgres:              # Airflow's own metadata DB (not our warehouse - that's Snowflake)
+    image: postgres:16
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    command: ["bash", "-c", "airflow db migrate"]
+    restart: "no"
+
+  airflow-apiserver:
+    <<: *airflow-common
+    container_name: airflow-apiserver
+    command: api-server
+    ports:
+      - "8080:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: airflow-dag-processor
+    command: dag-processor
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  minio_data:
+  airflow_db:

@@ -1,0 +1,10 @@
+requests==2.34.2
+confluent-kafka==2.6.1
+python-dotenv[cli]==1.2.4
+boto3==1.40.0
+snowflake-connector-python==4.8.0
+dbt-core==1.12.5
+dbt-snowflake==1.12.1
+streamlit==1.65.0
+plotly==7.1.0
+pandas==3.0.6
